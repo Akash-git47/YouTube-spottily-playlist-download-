@@ -993,7 +993,9 @@ def build_download_opts(job, index, hook):
     # The web player client is throttled (HTTP 403) on this network; the
     # android client is not. Always prefer it for the actual download.
     opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
-    # Route through WARP proxy if available (bypasses datacenter IP blocks).
+    # Cookies + WARP proxy for YouTube (bypasses bot detection + IP blocks).
+    if YOUTUBE_COOKIES:
+        opts['cookiefile'] = YOUTUBE_COOKIES
     if _warp_available():
         opts['proxy'] = WARP_PROXY
     opts.update({
