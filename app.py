@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
@@ -43,10 +44,12 @@ YOUTUBE_COOKIES = _find_youtube_cookies()
 
 
 def _yt_opts(**extra):
-    """Return yt-dlp opts for YouTube with cookies if available."""
+    """Return yt-dlp opts for YouTube with cookies and WARP proxy if available."""
     opts = dict(YDL_BASE_OPTS)
     if YOUTUBE_COOKIES:
         opts['cookiefile'] = YOUTUBE_COOKIES
+    if _warp_available():
+        opts['proxy'] = WARP_PROXY
     opts.update(extra)
     return opts
 
@@ -103,6 +106,21 @@ YDL_BASE_OPTS = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     },
 }
+
+# Cloudflare WARP proxy — routes YouTube traffic through Cloudflare IPs
+# (YouTube blocks datacenter IPs but trusts Cloudflare).  Started by
+# start-warp.sh before gunicorn.  Falls back gracefully if unavailable.
+WARP_PROXY = 'socks5://127.0.0.1:1080'
+
+
+def _warp_available():
+    """Check if WARP SOCKS5 proxy is reachable."""
+    try:
+        s = socket.create_connection(('127.0.0.1', 1080), timeout=2)
+        s.close()
+        return True
+    except Exception:
+        return False
 
 
 class DownloadJob:
@@ -703,10 +721,18 @@ def fetch_video_info(url):
 
 def _fetch_video_info_ytdlp(url):
     # Try android client first (no cookies needed, works on residential IPs).
-    # If that fails, try with cookies + web client (may help on datacenter IPs).
-    candidates = [dict(YDL_BASE_OPTS, skip_download=True, noplaylist=True)]
+    # If that fails, try with WARP proxy (bypasses datacenter IP blocks).
+    # Last resort: cookies + web client (may help in some cases).
+    warp = _warp_available()
+    candidates = [
+        dict(YDL_BASE_OPTS, skip_download=True, noplaylist=True),
+    ]
+    if warp:
+        candidates.append(dict(YDL_BASE_OPTS, skip_download=True, noplaylist=True, proxy=WARP_PROXY))
     if YOUTUBE_COOKIES:
         candidates.append(dict(YDL_BASE_OPTS, skip_download=True, noplaylist=True, cookiefile=YOUTUBE_COOKIES))
+    if warp and YOUTUBE_COOKIES:
+        candidates.append(dict(YDL_BASE_OPTS, skip_download=True, noplaylist=True, cookiefile=YOUTUBE_COOKIES, proxy=WARP_PROXY))
     info = None
     for opts in candidates:
         try:
@@ -765,9 +791,14 @@ def fetch_playlist_info(url):
 
 
 def _fetch_playlist_info_ytdlp(url):
+    warp = _warp_available()
     candidates = [dict(YDL_BASE_OPTS, skip_download=True, extract_flat=True, playlistend=MAX_ITEMS)]
+    if warp:
+        candidates.append(dict(YDL_BASE_OPTS, skip_download=True, extract_flat=True, playlistend=MAX_ITEMS, proxy=WARP_PROXY))
     if YOUTUBE_COOKIES:
         candidates.append(dict(YDL_BASE_OPTS, skip_download=True, extract_flat=True, playlistend=MAX_ITEMS, cookiefile=YOUTUBE_COOKIES))
+    if warp and YOUTUBE_COOKIES:
+        candidates.append(dict(YDL_BASE_OPTS, skip_download=True, extract_flat=True, playlistend=MAX_ITEMS, cookiefile=YOUTUBE_COOKIES, proxy=WARP_PROXY))
     info = None
     for opts in candidates:
         try:
@@ -962,6 +993,9 @@ def build_download_opts(job, index, hook):
     # The web player client is throttled (HTTP 403) on this network; the
     # android client is not. Always prefer it for the actual download.
     opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+    # Route through WARP proxy if available (bypasses datacenter IP blocks).
+    if _warp_available():
+        opts['proxy'] = WARP_PROXY
     opts.update({
         'outtmpl': outtmpl,
         'noplaylist': True,

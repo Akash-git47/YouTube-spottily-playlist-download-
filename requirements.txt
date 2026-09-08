@@ -3,3 +3,4 @@ yt-dlp>=2025.1.15
 gunicorn>=22.0.0
 spotifyscraper>=3.9.0
 playwright>=1.40.0
+pysocks>=1.7.0
