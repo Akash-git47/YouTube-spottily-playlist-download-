@@ -1,0 +1,9 @@
+temp/
+.run/
+__pycache__/
+*.pyc
+*.pyo
+server.log
+start.bat
+.DS_Store
+ms-playwright/

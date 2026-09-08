@@ -1,0 +1,5 @@
+flask>=3.0.0
+yt-dlp>=2025.1.15
+gunicorn>=22.0.0
+spotifyscraper>=3.9.0
+playwright>=1.40.0

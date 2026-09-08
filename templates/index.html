@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TubeFetch — Multi-Platform Downloader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Righteous&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" fill="currentColor" stroke="none"/></svg>
+      </span>
+      <span class="brand-name">TubeFetch</span>
+    </div>
+    <span class="nav-badge">YouTube &middot; Spotify &middot; Instagram &middot; Reddit &middot; Vimeo</span>
+  </nav>
+
+  <main>
+    <section class="hero" id="hero">
+      <h1 class="hero-title">Grab any video or audio <span class="grad">from any platform</span></h1>
+      <p class="hero-sub">Paste a link from YouTube, Spotify, Instagram, Reddit, Vimeo, SoundCloud, Dailymotion, or TikTok — get high-quality MP3 audio or MP4 video, one item or a whole batch.</p>
+
+      <form id="urlForm" autocomplete="off">
+        <div class="url-bar">
+          <span class="url-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          </span>
+          <input id="urlInput" type="url" placeholder="Paste a YouTube, Spotify, Instagram, Reddit… link" required aria-label="Video or audio link">
+          <button type="submit" id="goBtn" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            Get Video
+          </button>
+        </div>
+      </form>
+
+      <div id="error" class="hidden" role="alert"></div>
+
+      <div id="loading" class="hidden">
+        <span class="spinner" aria-hidden="true"></span>
+        Fetching video info…
+      </div>
+    </section>
+
+    <section id="videoView" class="view hidden">
+      <div class="video-card">
+        <div class="video-wrap" id="videoWrap">
+          <iframe id="player" src="" title="YouTube video player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+          <div id="posterWrap" class="poster hidden">
+            <img id="videoPoster" src="" alt="" loading="lazy">
+            <button id="playBtn" class="play-btn" aria-label="Play video" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3" fill="currentColor"/></svg>
+            </button>
+          </div>
+          <img id="trackArt" class="track-art hidden" src="" alt="" loading="lazy">
+        </div>
+        <div class="video-meta">
+          <h2 id="videoTitle"></h2>
+          <span id="videoVia" class="chip chip-spotify hidden"></span>
+          <span id="videoDuration" class="chip"></span>
+          <a id="watchOnYT" class="chip chip-link hidden" href="#" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            Watch on YouTube
+          </a>
+        </div>
+      </div>
+
+      <div class="download-cards">
+        <article class="card card-mp3">
+          <div class="card-head">
+            <span class="card-icon icon-mp3" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            </span>
+            <div>
+              <h3>MP3 Audio</h3>
+              <p>High-quality sound, ready for your playlist.</p>
+            </div>
+          </div>
+          <button id="dlMp3" class="btn btn-cta">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download MP3
+          </button>
+        </article>
+
+        <article id="cardMp4" class="card card-mp4">
+          <div class="card-head">
+            <span class="card-icon icon-mp4" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
+            </span>
+            <div>
+              <h3>MP4 Video</h3>
+              <p>Keep the clip in the quality you want.</p>
+            </div>
+          </div>
+          <div class="select-row">
+            <label for="mp4Quality">Quality</label>
+            <select id="mp4Quality"></select>
+          </div>
+          <button id="dlMp4" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download MP4
+          </button>
+        </article>
+      </div>
+    </section>
+
+    <section id="playlistView" class="view hidden">
+      <div class="pl-head">
+        <h2 id="playlistTitle"></h2>
+        <span id="plVia" class="chip chip-spotify hidden"></span>
+        <span id="selCount" class="muted"></span>
+      </div>
+
+      <div class="pl-toolbar">
+        <label class="check">
+          <input type="checkbox" id="selectAll">
+          <span class="checkmark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </span>
+          Select all
+        </label>
+        <div class="select-row">
+          <label for="plQuality">MP4 quality</label>
+          <select id="plQuality">
+            <option value="144p">144p</option>
+            <option value="240p">240p</option>
+            <option value="360p">360p</option>
+            <option value="480p">480p</option>
+            <option value="720p" selected>720p</option>
+            <option value="1080p">1080p</option>
+          </select>
+        </div>
+        <div class="toolbar-actions">
+          <button id="plMp3" class="btn btn-cta">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            MP3 ZIP
+          </button>
+          <button id="plMp4" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            MP4 ZIP
+          </button>
+        </div>
+      </div>
+
+      <div id="playlistGrid"></div>
+    </section>
+
+    <section id="progressView" class="view hidden" aria-live="polite">
+      <div class="progress-head">
+        <span id="progressIcon" class="spinner" aria-hidden="true"></span>
+        <div class="progress-titles">
+          <div id="progressText" class="progress-title">Starting…</div>
+          <div id="progressCurrent" class="progress-current muted"></div>
+        </div>
+      </div>
+      <div class="progress-track">
+        <div class="progress-bar"><div id="progressFill"></div></div>
+        <span id="progressPct" class="progress-pct">0%</span>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>TubeFetch &mdash; download video &amp; audio from YouTube, Spotify, Instagram, Reddit, and more. Personal use only.</p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
