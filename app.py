@@ -15,16 +15,31 @@ import urllib.request
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from flask import Flask, jsonify, render_template, request, send_file
 import yt_dlp
+
+
+def _find_youtube_cookies():
+    """Locate a YouTube cookies.txt file for yt-dlp authentication."""
+    candidates = [
+        os.environ.get('YOUTUBE_COOKIES'),
+        os.path.join(BASE_DIR, 'cookies.txt'),
+        '/etc/secrets/cookies.txt',
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
 
 app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, 'temp')
 os.makedirs(TEMP_DIR, exist_ok=True)
+
+YOUTUBE_COOKIES = _find_youtube_cookies()
 
 # Clear leftovers from previous runs.
 for old in os.listdir(TEMP_DIR):
@@ -79,6 +94,8 @@ YDL_BASE_OPTS = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     },
 }
+if YOUTUBE_COOKIES:
+    YDL_BASE_OPTS['cookiefile'] = YOUTUBE_COOKIES
 
 
 class DownloadJob:
@@ -604,7 +621,80 @@ def fetch_instagram_post(url):
         }
 
 
+def _proxy_youtube_info(url):
+    """Fallback: fetch YouTube video info via a public proxy API when yt-dlp is
+    blocked by YouTube's datacenter IP restrictions.  Returns a dict matching
+    the format of fetch_video_info, or raises on failure."""
+    # Extract video ID from URL
+    m = re.search(r'(?:v=|youtu\.be/|/shorts/)([A-Za-z0-9_-]{11})', url)
+    if not m:
+        raise ValueError('Could not extract video ID.')
+    vid = m.group(1)
+
+    # Try multiple public Invidious instances
+    invidious_instances = [
+        'https://inv.nadeko.net',
+        'https://invidious.nerdvpn.de',
+        'https://vid.puffyan.us',
+        'https://invidious.private.coffee',
+    ]
+    for instance in invidious_instances:
+        try:
+            api_url = f'{instance}/api/v1/videos/{vid}'
+            req = urllib.request.Request(api_url, headers={
+                'User-Agent': YDL_BASE_OPTS['http_headers']['User-Agent'],
+            })
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            if data.get('error'):
+                continue
+            title = data.get('title') or 'Unknown'
+            thumb = data.get('videoThumbnails') or []
+            # Pick highest-res thumbnail
+            best_thumb = ''
+            for t in thumb:
+                if t.get('quality') == 'maxres':
+                    best_thumb = t.get('url', '')
+                    break
+                if t.get('quality') == 'sddefault' and not best_thumb:
+                    best_thumb = t.get('url', '')
+            if not best_thumb and thumb:
+                best_thumb = thumb[0].get('url', '')
+            if not best_thumb:
+                best_thumb = f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg'
+
+            return {
+                'type': 'video',
+                'id': vid,
+                'title': title,
+                'thumbnail': best_thumb if best_thumb.startswith('http') else f'{instance}{best_thumb}',
+                'duration': duration_str(data.get('lengthSeconds')),
+                'url': url,
+                'qualities': [{'label': '360p', 'value': '360p'}],
+                'source': 'youtube_proxy',
+            }
+        except Exception:
+            continue
+
+    raise ValueError(
+        'YouTube is blocking this server\'s IP. '
+        'You can upload a cookies.txt file to enable downloads, '
+        'or try again later.'
+    )
+
+
 def fetch_video_info(url):
+    # If it's a YouTube URL, try yt-dlp first, then fall back to proxy.
+    is_yt = bool(re.search(r'(youtube\.com|youtu\.be)', url))
+    if is_yt:
+        try:
+            return _fetch_video_info_ytdlp(url)
+        except Exception:
+            return _proxy_youtube_info(url)
+    return _fetch_video_info_ytdlp(url)
+
+
+def _fetch_video_info_ytdlp(url):
     opts = dict(YDL_BASE_OPTS)
     opts.update({'skip_download': True, 'noplaylist': True})
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -648,6 +738,16 @@ def fetch_video_info(url):
 
 
 def fetch_playlist_info(url):
+    is_yt = bool(re.search(r'(youtube\.com|youtu\.be)', url))
+    if is_yt:
+        try:
+            return _fetch_playlist_info_ytdlp(url)
+        except Exception:
+            return _fetch_playlist_info_proxy(url)
+    return _fetch_playlist_info_ytdlp(url)
+
+
+def _fetch_playlist_info_ytdlp(url):
     opts = dict(YDL_BASE_OPTS)
     opts.update({
         'skip_download': True,
@@ -682,6 +782,63 @@ def fetch_playlist_info(url):
         'title': info.get('title'),
         'entries': entries,
     }
+
+
+def _fetch_playlist_info_proxy(url):
+    """Fetch YouTube playlist via Invidious proxy."""
+    # Extract playlist ID from URL
+    m = re.search(r'[?&]list=([A-Za-z0-9_-]+)', url)
+    if not m:
+        raise ValueError('Could not extract playlist ID.')
+    plid = m.group(1)
+
+    invidious_instances = [
+        'https://inv.nadeko.net',
+        'https://invidious.nerdvpn.de',
+        'https://vid.puffyan.us',
+        'https://invidious.private.coffee',
+    ]
+    for instance in invidious_instances:
+        try:
+            api_url = f'{instance}/api/v1/playlists/{plid}'
+            req = urllib.request.Request(api_url, headers={
+                'User-Agent': YDL_BASE_OPTS['http_headers']['User-Agent'],
+            })
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode())
+            if data.get('error'):
+                continue
+            entries = []
+            for e in (data.get('videos') or [])[:MAX_ITEMS]:
+                vid = e.get('videoId')
+                if not vid:
+                    continue
+                thumb = e.get('videoThumbnails') or []
+                best_thumb = f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg'
+                for t in thumb:
+                    if t.get('quality') == 'sddefault':
+                        best_thumb = t.get('url', best_thumb)
+                        break
+                entries.append({
+                    'id': vid,
+                    'title': e.get('title') or 'Unknown',
+                    'thumbnail': best_thumb if best_thumb.startswith('http') else f'{instance}{best_thumb}',
+                    'duration': duration_str(e.get('lengthSeconds')),
+                    'url': f'https://www.youtube.com/watch?v={vid}',
+                    'ie_key': '',
+                })
+            if entries:
+                return {
+                    'type': 'playlist',
+                    'title': data.get('title') or 'YouTube Playlist',
+                    'entries': entries,
+                }
+        except Exception:
+            continue
+    raise ValueError(
+        'YouTube is blocking this server\'s IP. '
+        'Upload a cookies.txt file to enable playlist downloads.'
+    )
 
 
 @app.route('/api/info', methods=['POST'])
@@ -859,16 +1016,47 @@ def build_query_fallbacks(item):
 
 def search_candidates(query, limit=3):
     """Top `limit` YouTube video URLs for a search query (flat, fast)."""
-    opts = dict(YDL_BASE_OPTS)
-    opts.update({'skip_download': True, 'process': False, 'extract_flat': True})
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(f'ytsearch{limit}:{query}', download=False)
-    urls = []
-    for e in (info.get('entries') or []):
-        vid = e.get('id')
-        if vid:
-            urls.append(f'https://www.youtube.com/watch?v={vid}')
-    return urls
+    # Try yt-dlp first, fall back to Invidious search API.
+    try:
+        opts = dict(YDL_BASE_OPTS)
+        opts.update({'skip_download': True, 'process': False, 'extract_flat': True})
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f'ytsearch{limit}:{query}', download=False)
+        urls = []
+        for e in (info.get('entries') or []):
+            vid = e.get('id')
+            if vid:
+                urls.append(f'https://www.youtube.com/watch?v={vid}')
+        if urls:
+            return urls
+    except Exception:
+        pass
+
+    # Fallback: Invidious search API
+    invidious_instances = [
+        'https://inv.nadeko.net',
+        'https://invidious.nerdvpn.de',
+        'https://vid.puffyan.us',
+        'https://invidious.private.coffee',
+    ]
+    for instance in invidious_instances:
+        try:
+            api_url = f'{instance}/api/v1/search?q={urllib.parse.quote(query)}&type=video&sort_by=relevance'
+            req = urllib.request.Request(api_url, headers={
+                'User-Agent': YDL_BASE_OPTS['http_headers']['User-Agent'],
+            })
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            urls = []
+            for entry in (data or [])[:limit]:
+                vid = entry.get('videoId')
+                if vid:
+                    urls.append(f'https://www.youtube.com/watch?v={vid}')
+            if urls:
+                return urls
+        except Exception:
+            continue
+    return []
 
 
 def _download_url(job, item, index, url):
@@ -877,6 +1065,106 @@ def _download_url(job, item, index, url):
     if item.get('source') == 'instagram':
         _download_instagram(job, item, index, url)
         return
+
+    # YouTube: try yt-dlp first, then fall back to proxy download.
+    is_yt = bool(re.search(r'(youtube\.com|youtu\.be)', url))
+    if is_yt:
+        try:
+            _download_url_ytdlp(job, item, index, url)
+            return
+        except Exception:
+            _download_url_proxy(job, item, index, url)
+            return
+
+    _download_url_ytdlp(job, item, index, url)
+
+
+def _download_url_proxy(job, item, index, url):
+    """Download a YouTube video via a public Invidious proxy instance."""
+    m = re.search(r'(?:v=|youtu\.be/|/shorts/)([A-Za-z0-9_-]{11})', url)
+    if not m:
+        raise ValueError('Could not extract video ID for proxy download.')
+    vid = m.group(1)
+
+    invidious_instances = [
+        'https://inv.nadeko.net',
+        'https://invidious.nerdvpn.de',
+        'https://vid.puffyan.us',
+        'https://invidious.private.coffee',
+    ]
+    for instance in invidious_instances:
+        try:
+            api_url = f'{instance}/api/v1/videos/{vid}'
+            req = urllib.request.Request(api_url, headers={
+                'User-Agent': YDL_BASE_OPTS['http_headers']['User-Agent'],
+            })
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            if data.get('error'):
+                continue
+
+            title = safe_name(data.get('title') or item.get('title') or f'video_{index + 1}')
+
+            # Pick best available stream
+            streams = data.get('formatStreams') or []
+            # Prefer mp4, then highest quality
+            best = None
+            for s in streams:
+                if 'mp4' in (s.get('type') or ''):
+                    best = s
+                    break
+            if not best and streams:
+                best = streams[-1]  # highest quality last
+
+            if not best:
+                continue
+
+            stream_url = best.get('url')
+            if not stream_url:
+                continue
+
+            ext = '.mp4'
+            if job.file_type == 'mp3':
+                ext = '.webm'  # download audio-only format if available
+                for s in (data.get('adaptiveFormats') or []):
+                    if 'audio' in (s.get('type') or '') and s.get('url'):
+                        stream_url = s['url']
+                        ext = '.webm'
+                        break
+
+            if len(job.items) > 1:
+                fname = f'{index + 1:02d} - {title}{ext}'
+            else:
+                fname = f'{title}{ext}'
+            dest = os.path.join(job.folder, fname)
+
+            job.message = 'Downloading via proxy...'
+            req = urllib.request.Request(stream_url, headers={
+                'User-Agent': YDL_BASE_OPTS['http_headers']['User-Agent'],
+                'Referer': f'{instance}/',
+            })
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                with open(dest, 'wb') as f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+
+            if job.file_type == 'mp3':
+                target = os.path.splitext(dest)[0] + '.mp3'
+                job.message = 'Encoding...'
+                encode_mp3(dest, target, max_chunks=job.chunk_limit)
+                os.remove(dest)
+
+            return
+        except Exception:
+            continue
+
+    raise RuntimeError('All proxy instances failed. YouTube may be temporarily unavailable.')
+
+
+def _download_url_ytdlp(job, item, index, url):
 
     downloaded = {'file': None}
     before = set(os.listdir(job.folder))

@@ -7,3 +7,4 @@ server.log
 start.bat
 .DS_Store
 ms-playwright/
+cookies.txt
