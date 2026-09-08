@@ -41,6 +41,15 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 YOUTUBE_COOKIES = _find_youtube_cookies()
 
+
+def _yt_opts(**extra):
+    """Return yt-dlp opts for YouTube with cookies if available."""
+    opts = dict(YDL_BASE_OPTS)
+    if YOUTUBE_COOKIES:
+        opts['cookiefile'] = YOUTUBE_COOKIES
+    opts.update(extra)
+    return opts
+
 # Clear leftovers from previous runs.
 for old in os.listdir(TEMP_DIR):
     shutil.rmtree(os.path.join(TEMP_DIR, old), ignore_errors=True)
@@ -94,8 +103,6 @@ YDL_BASE_OPTS = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     },
 }
-if YOUTUBE_COOKIES:
-    YDL_BASE_OPTS['cookiefile'] = YOUTUBE_COOKIES
 
 
 class DownloadJob:
@@ -695,10 +702,20 @@ def fetch_video_info(url):
 
 
 def _fetch_video_info_ytdlp(url):
-    opts = dict(YDL_BASE_OPTS)
-    opts.update({'skip_download': True, 'noplaylist': True})
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    # Try android client first (no cookies needed, works on residential IPs).
+    # If that fails, try with cookies + web client (may help on datacenter IPs).
+    candidates = [dict(YDL_BASE_OPTS, skip_download=True, noplaylist=True)]
+    if YOUTUBE_COOKIES:
+        candidates.append(dict(YDL_BASE_OPTS, skip_download=True, noplaylist=True, cookiefile=YOUTUBE_COOKIES))
+    info = None
+    for opts in candidates:
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            if info:
+                break
+        except Exception:
+            continue
     if not info:
         raise ValueError('Could not fetch the video. It may be private or unavailable.')
     # yt-dlp may return a playlist for multi-media posts (Instagram carousels,
@@ -748,14 +765,18 @@ def fetch_playlist_info(url):
 
 
 def _fetch_playlist_info_ytdlp(url):
-    opts = dict(YDL_BASE_OPTS)
-    opts.update({
-        'skip_download': True,
-        'extract_flat': True,
-        'playlistend': MAX_ITEMS,
-    })
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    candidates = [dict(YDL_BASE_OPTS, skip_download=True, extract_flat=True, playlistend=MAX_ITEMS)]
+    if YOUTUBE_COOKIES:
+        candidates.append(dict(YDL_BASE_OPTS, skip_download=True, extract_flat=True, playlistend=MAX_ITEMS, cookiefile=YOUTUBE_COOKIES))
+    info = None
+    for opts in candidates:
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            if info:
+                break
+        except Exception:
+            continue
     if not info:
         raise ValueError('Could not fetch the playlist. It may be private or unavailable.')
     entries = []
@@ -1018,8 +1039,7 @@ def search_candidates(query, limit=3):
     """Top `limit` YouTube video URLs for a search query (flat, fast)."""
     # Try yt-dlp first, fall back to Invidious search API.
     try:
-        opts = dict(YDL_BASE_OPTS)
-        opts.update({'skip_download': True, 'process': False, 'extract_flat': True})
+        opts = _yt_opts(skip_download=True, process=False, extract_flat=True)
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f'ytsearch{limit}:{query}', download=False)
         urls = []
