@@ -651,7 +651,7 @@ def _proxy_youtube_info(url):
     blocked by YouTube's datacenter IP restrictions.  Returns a dict matching
     the format of fetch_video_info, or raises on failure."""
     # Extract video ID from URL
-    m = re.search(r'(?:v=|youtu\.be/|/shorts/)([A-Za-z0-9_-]{11})', url)
+    m = re.search(r'(?:v=|youtu\.be/|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{11})', url)
     if not m:
         raise ValueError('Could not extract video ID.')
     vid = m.group(1)
@@ -1137,7 +1137,7 @@ def _download_url(job, item, index, url):
 
 def _download_url_proxy(job, item, index, url):
     """Download a YouTube video via a public Invidious proxy instance."""
-    m = re.search(r'(?:v=|youtu\.be/|/shorts/)([A-Za-z0-9_-]{11})', url)
+    m = re.search(r'(?:v=|youtu\.be/|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{11})', url)
     if not m:
         raise ValueError('Could not extract video ID for proxy download.')
     vid = m.group(1)
