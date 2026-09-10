@@ -23,11 +23,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Cloudflare WARP proxy (wireproxy + wgcf for credential generation)
+# Best-effort: if downloads fail, app still works without WARP.
 RUN curl -fsSL "https://github.com/windtf/wireproxy/releases/download/v1.1.3/wireproxy_linux_amd64.tar.gz" \
-    | tar xz -C /usr/local/bin wireproxy \
-    && curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.32/wgcf_2.2.32_linux_amd64" \
-    -o /usr/local/bin/wgcf \
-    && chmod +x /usr/local/bin/wgcf
+    | tar xz -C /usr/local/bin wireproxy || echo "wireproxy download failed"
+RUN curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.32/wgcf_2.2.32_linux_amd64" \
+    -o /usr/local/bin/wgcf && chmod +x /usr/local/bin/wgcf || echo "wgcf download failed"
 
 # Store Playwright browsers alongside app code (smaller image)
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/ms-playwright
